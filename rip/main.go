@@ -48,15 +48,25 @@ func (l csvline) Question() string {
 	return l[1]
 }
 func (l csvline) Type() string { return l[2] }
-func (l csvline) Titre() string {
+func (l csvline) Title() string {
 	return strings.NewReplacer(" - ", "-", " ", "-").Replace(l[3]) + ".mp3"
 }
-func (l csvline) URL() string     { return l[4] }
+func (l csvline) URL() []string   { return strings.Split(l[4], " | ") }
 func (l csvline) QStart() string  { return l[5] }
 func (l csvline) QLength() string { return l[6] }
 func (l csvline) AStart() string  { return l[7] }
 func (l csvline) ALength() string { return l[8] }
 func (l csvline) Speed() string   { return l[9] }
+func (l csvline) OverlapPath() string {
+	return filepath.Join(
+		outdir,
+		"questions",
+		fmt.Sprintf(
+			"%s-overlap.mp3",
+			l.Question(),
+		),
+	)
+}
 func (l csvline) Path(prefix string) string {
 	return filepath.Join(
 		outdir,
@@ -64,10 +74,12 @@ func (l csvline) Path(prefix string) string {
 		fmt.Sprintf(
 			"%s-%s",
 			l.Question(),
-			l.Titre(),
+			l.Title(),
 		),
 	)
 }
+
+var overlap = map[string][]csvline{}
 
 func main() {
 	if len(os.Args) < 3 {
@@ -92,25 +104,49 @@ func main() {
 	for _, l := range lines {
 		line := csvline(l)
 		switch line.Type() {
+		case "overlap":
+			overlap[line.Question()] = append(overlap[line.Question()], line)
+			fallthrough
 		case "normal":
 			if err := processNormal(line); err != nil {
-				fmt.Printf("unable to process %s:%s", line.Titre(), err)
+				fmt.Printf("unable to process %s:%s", line.Title(), err)
 			}
 		case "midi":
 			if err := processMidi(line); err != nil {
-				fmt.Printf("unable to process %s:%s", line.Titre(), err)
+				fmt.Printf("unable to process %s:%s", line.Title(), err)
 			}
 		case "slow", "fast":
-			log.Println(l)
 			if err := processSpeed(line); err != nil {
-				fmt.Printf("unable to process %s:%s", line.Titre(), err)
+				fmt.Printf("unable to process %s:%s", line.Title(), err)
 			}
 		}
 	}
+	if err := processOverlap(); err != nil {
+		fmt.Printf("unable to process overlap:%s", err)
+	}
+}
+
+func processOverlap() error {
+	//loop through all overlap
+	//loop through all song
+	for q, lines := range overlap {
+		if len(lines) != 2 {
+			return fmt.Errorf("unable to process overlap with more/less than 2 songs for question", q)
+		}
+		mp3, err := mixMp3(lines[0].Path("questions"), lines[1].Path("questions"), "1.0")
+		if err != nil {
+			return err
+		}
+		os.Rename(mp3, lines[0].OverlapPath())
+		os.Remove(lines[0].Path("questions"))
+		os.Remove(lines[1].Path("questions"))
+	}
+	return nil
 }
 
 func processMidi(l csvline) error {
-	midi, err := download(l.URL())
+
+	midi, err := download(l.URL()[0])
 	if err != nil {
 		return err
 	}
@@ -124,7 +160,13 @@ func processMidi(l csvline) error {
 	if err != nil {
 		return err
 	}
-	answer, err := cutMp3(mp3, l.AStart(), l.ALength())
+
+	answermp3, err := ripYoutubeMp3(l.URL()[1])
+	if err != nil {
+		return err
+	}
+
+	answer, err := cutMp3(answermp3, l.AStart(), l.ALength())
 	if err != nil {
 		return err
 	}
@@ -146,7 +188,7 @@ func processSpeed(l csvline) error {
 }
 
 func processNormal(l csvline) error {
-	mp3, err := ripYoutubeMp3(l.URL())
+	mp3, err := ripYoutubeMp3(l.URL()[0])
 	if err != nil {
 		return err
 	}
@@ -203,8 +245,8 @@ func tempdir() string {
 func command(name string, args ...string) *exec.Cmd {
 	log.Printf("Running %s %s", name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
+	// cmd.Stderr = os.Stderr
+	// cmd.Stdout = os.Stdout
 	return cmd
 }
 
@@ -279,7 +321,7 @@ func convertMidiToMp3(infile string) (outfile string, err error) {
 func mixMp3(file1, file2, volumeAdjust string) (outfile string, err error) {
 	os.Chdir(tmpdir)
 	outfile = tempname(".mp3")
-	err = command(sox, file1, "-v", volumeAdjust, file2, outfile).Run()
+	err = command(sox, "-m", file1, "-v", volumeAdjust, file2, outfile).Run()
 	return
 }
 
