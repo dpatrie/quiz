@@ -33,7 +33,7 @@ ffmpeg -ss [start second] -i [mp3 file] -t [length] -acodec copy [final file]
 timidity [midi file] -Ow -o - | ffmpeg -i - -acodec libmp3lame -ab 64k [mp3 file]
 ```
 
-### To mix to mp3 together
+### To mix two mp3 together
 ```
 sox -m [first mp3] -v [optional volume adjustment] [second mp3] [final file]
 ```
